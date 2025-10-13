@@ -129,7 +129,6 @@ def train_agent(
     print(f"Parameters: {lookback_window_size} lookback window, {episodes} episodes")
     print(f"Trajectory size: {trajectory_size}, Batch size: {batch_size}, Epochs: {epochs}")
     print(f"Initial balance: ${initial_balance}, Commission: {commission*100}%")
-    print("Note: Training may take approximately 100 hours to complete all episodes based on paper")
     
     start_time = datetime.now()
     
@@ -156,7 +155,8 @@ def train_agent(
     
     # Step 4: Initialize environment (as shown in Figure 4)
     print("Step 4: Initializing environment...")
-    train_env = CryptoTradingEnv(train_df, lookback_window_size, initial_balance, commission)
+    # Use random_start=True for training to expose agent to diverse market conditions
+    train_env = CryptoTradingEnv(train_df, lookback_window_size, initial_balance, commission, random_start=True)
     
     # Get input shape and action space from environment
     input_shape = train_env.observation_space.shape
@@ -568,7 +568,8 @@ def train_agent(
     
     # Test the trained agent
     print("Starting testing...")
-    test_env = CryptoTradingEnv(test_df, lookback_window_size, initial_balance, commission)
+    # Use random_start=False for testing to evaluate performance from start to finish
+    test_env = CryptoTradingEnv(test_df, lookback_window_size, initial_balance, commission, random_start=False)
     
     # Create a test agent with the same risk parameters
     test_agent = PPOAgent(

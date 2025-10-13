@@ -7,13 +7,14 @@ from collections import deque
 class CryptoTradingEnv(gym.Env):
     """A cryptocurrency trading environment for OpenAI gym based on research paper"""
     
-    def __init__(self, df, lookback_window_size=100, initial_balance=1000, commission=0.001):
+    def __init__(self, df, lookback_window_size=100, initial_balance=1000, commission=0.001, random_start=True):
         super(CryptoTradingEnv, self).__init__()
         
         self.df = df
         self.lookback_window_size = lookback_window_size
         self.initial_balance = initial_balance
         self.commission = commission  # Trading commission fee (0.1%)
+        self.random_start = random_start  # Whether to randomize starting position
         self.current_step = self.lookback_window_size
         
         # Check if we have the original and differenced price data
@@ -42,8 +43,19 @@ class CryptoTradingEnv(gym.Env):
         self.reset()
         
     def reset(self):
-        # Reset step
-        self.current_step = self.lookback_window_size
+        """
+        Reset the environment to a starting position.
+        If random_start is True, choose a random starting point in the dataset.
+        This ensures diverse training scenarios across different market conditions.
+        """
+        # Randomize starting position during training to expose agent to diverse scenarios
+        if self.random_start:
+            # Leave enough room for a meaningful episode (at least 100 steps)
+            max_start = len(self.df) - 100
+            self.current_step = np.random.randint(self.lookback_window_size, max_start)
+        else:
+            # For evaluation/backtesting, always start from the beginning
+            self.current_step = self.lookback_window_size
         
         # Reset balance, holdings, net worth
         self.balance = self.initial_balance
@@ -99,7 +111,7 @@ class CryptoTradingEnv(gym.Env):
         # Update net worth with current price
         self.net_worth = self.balance + self.crypto_held * self._get_current_price()
         
-        # Calculate reward as per formula [6]
+        # Calculate reward
         reward = self._calculate_reward()
         
         # Update history
@@ -132,8 +144,6 @@ class CryptoTradingEnv(gym.Env):
     
     def _take_action(self, action, price):
         """Execute the specified action"""
-        # Record the action for metrics
-        action_type = ["BUY", "HOLD", "SELL"][action]
         
         if action == 0:  # Buy
             self._buy_crypto(price)
@@ -150,7 +160,7 @@ class CryptoTradingEnv(gym.Env):
     
     def _buy_crypto(self, price):
         """
-        Execute buy action using formula [4] from the paper:
+        Execute buy action:
         Amount bought = Current net worth / Current crypto closing price
         """
         if self.balance > 0:
@@ -185,7 +195,7 @@ class CryptoTradingEnv(gym.Env):
             
     def _sell_crypto(self, price):
         """
-        Execute sell action using formula [5] from the paper:
+        Execute sell action:
         Amount sold = Current crypto amount held × Current crypto closing price
         """
         if self.crypto_held > 0:
@@ -219,7 +229,6 @@ class CryptoTradingEnv(gym.Env):
     def _calculate_reward(self):
         """
         Calculate reward based on the change in portfolio value
-        using the formula from the paper:
         r_t = (v_t - v_{t-1}) / v_{t-1}
         
         Where:

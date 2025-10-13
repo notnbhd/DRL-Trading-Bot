@@ -65,12 +65,14 @@ class Backtester:
         self.data_processor = DataProcessor()
         self.df = self._prepare_data()
         
-        # Initialize environment
+        # Initialize environment with random_start=False for backtesting
+        # Backtesting should always evaluate from the beginning to end sequentially
         self.env = CryptoTradingEnv(
             self.df, 
             lookback_window_size=self.lookback_window_size,
             initial_balance=self.initial_balance,
-            commission=self.commission
+            commission=self.commission,
+            random_start=False
         )
         
         # Initialize agent

@@ -1,3 +1,9 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 import pandas as pd
 import numpy as np
 from ta.volatility import AverageTrueRange
@@ -34,7 +40,9 @@ class DataProcessor:
         """
         if source == 'binance':
             from binance.client import Client
-            client = Client('F9NT4xEgm4NBLXljYuWO7TJPZxkQSyZe8L4m0pCYOksxAfwtcV2jSH1NFiPzR2St', '3tAjZHrzYgLurUGg72Ly8CcrFTNxi0rWkcDjHaTgDqIEJF4EVKpJCEmpzSPhc5AO')  # Use API keys if needed
+            api_key = os.getenv('API_KEY')
+            api_secret = os.getenv('API_SECRET')
+            client = Client(api_key, api_secret)
             
             klines = client.get_historical_klines(
                 symbol=symbol,
@@ -318,4 +326,4 @@ class DataProcessor:
         
         plt.tight_layout()
         plt.savefig('technical_indicators.png')
-        plt.close() 
+        plt.close()

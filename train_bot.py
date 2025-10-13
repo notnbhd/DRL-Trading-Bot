@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
     else:
         episodes = args.episodes
-        print(f"🔄 Full training mode with {episodes} episodes")
+        print(f"Full training mode with {episodes} episodes")
 
     
     # GPU configuration
@@ -71,16 +71,16 @@ if __name__ == "__main__":
     if args.mixed_precision and use_gpu:
         try:
             import tensorflow as tf
-            print("🚀 Enabling mixed precision training for faster performance")
+            print("Enabling mixed precision training for faster performance")
             policy = tf.keras.mixed_precision.Policy('mixed_float16')
             tf.keras.mixed_precision.set_global_policy(policy)
             print("Mixed precision policy set successfully")
         except Exception as e:
-            print(f"⚠️ Warning: Could not enable mixed precision: {e}")
+            print(f"Warning: Could not enable mixed precision: {e}")
             print("Continuing with default precision settings")
     
-    print(f"\n📈 Starting training for {args.symbol} from {args.start_date} to {args.end_date}")
-    print(f"📊 Training configuration:")
+    print(f"\nStarting training for {args.symbol} from {args.start_date} to {args.end_date}")
+    print(f"Training configuration:")
     print(f"  - Episodes: {episodes}")
     print(f"  - Trajectory size: {args.trajectory_size} steps per episode")
     print(f"  - Batch size: {args.batch_size}")
