@@ -207,8 +207,7 @@ class PPOAgent:
     
     def _compute_advantage(self, rewards, values, next_values, dones):
         """
-        Compute Generalized Advantage Estimation (GAE) as shown in "Critic predict
-        discounted rewards and baseline estimate" step in Figure 4
+        Compute Generalized Advantage Estimation (GAE)
         
         This computes Ât in the PPO formula: L^CLIP(θ) = Ê_t[min(r_t(θ)Â_t, clip(r_t(θ), 1-ε, 1+ε)Â_t)]
         

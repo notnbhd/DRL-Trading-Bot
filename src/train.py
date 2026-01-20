@@ -79,7 +79,7 @@ def train_agent(
     use_lr_schedule=False         # Flag to enable/disable learning rate scheduling
 ):
     """
-    Train the PPO agent with cryptocurrency data following the flowchart in Figure 4
+    Train the PPO agent with cryptocurrency data
     
     Parameters:
     -----------
@@ -344,8 +344,8 @@ def train_agent(
     
     best_reward = -np.inf
     
-    # Start training loop (matching pseudocode in Figure 5)
-    print("Starting training (following flowchart in Figure 4)...")
+    # Start training loop
+    print("Starting training...")
     
     # Create an exception handling wrapper for the training loop
     try:
@@ -353,16 +353,14 @@ def train_agent(
             episode_start_time = datetime.now()
             print(f"Episode {episode+1}/{episodes}")
             
-            # Reset environment at the beginning of each episode (Figure 5: Environment reset)
+            # Reset environment at the beginning of each episode
             state = train_env.reset()
             episode_reward = 0
             done = False
             orders_count = 0  # Track number of orders in this episode
             position_sizes = []  # Track position sizes for this episode
             
-        
-            
-            # Collect trajectory by running old policy in environment (Figure 5)
+            # Collect trajectory by running old policy in environment
             print(f"Collecting trajectory...")
             steps = 0
             
@@ -384,7 +382,7 @@ def train_agent(
                     # Actor predict action on given states with risk management
                     action, action_probs = agent.get_action(state)
                     
-                    # Environment take predicted action (as shown in Figure 4)
+                    # Environment take predicted action
                     next_state, reward, done, info = train_env.step(action)
                     
                     # Calculate PnL from this step
@@ -417,7 +415,6 @@ def train_agent(
                         'net_worth': f'${info["net_worth"]:.2f}',
                     })
                     
-                    # No intermediate state saving needed since we save the latest model before each episode
             except Exception as e:
                 print(f"Error during trajectory collection: {e}")
                 # Try to save what we have so far
@@ -436,7 +433,7 @@ def train_agent(
             else:
                 train_history['trajectory_steps_per_episode'] = [steps]
             
-            # PPO Update step (Figure 5: "Update current policy" step)
+            # PPO Update step
             print("Updating policy...")
             
             # Run several epochs of training

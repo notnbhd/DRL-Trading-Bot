@@ -32,7 +32,7 @@ class CNNLSTM:
         self.critic = self._build_critic_model()
         
     def _build_actor_model(self):
-        """Build the actor model using CNN-LSTM architecture from Figure 7"""
+        """Build the actor model using CNN-LSTM architecture"""
         # Input layer (output shape = 100, 4)
         inputs = Input(shape=self.input_shape)
         
@@ -56,12 +56,8 @@ class CNNLSTM:
             return_sequences=False,
             name='actor_lstm_1'
         )(x)
-        
-        # Flatten layer (output shape = None, 32)
-        # Note: Flatten is not strictly needed since LSTM with return_sequences=False already outputs a flat tensor
-        # but including it to match the diagram exactly
-        x = Flatten(name='actor_flatten')(x)
-        
+
+       
         # Dense layer (output shape = None, 32)
         x = Dense(
             units=32,
@@ -82,7 +78,7 @@ class CNNLSTM:
         return model
     
     def _build_critic_model(self):
-        """Build the critic model with similar architecture to actor"""
+        """Build the critic model"""
         # Input layer (output shape = 100, 4)
         inputs = Input(shape=self.input_shape)
         
@@ -106,9 +102,6 @@ class CNNLSTM:
             return_sequences=False,
             name='critic_lstm_1'
         )(x)
-        
-        # Flatten layer (output shape = None, 32)
-        x = Flatten(name='critic_flatten')(x)
         
         # Dense layer (output shape = None, 32)
         x = Dense(
