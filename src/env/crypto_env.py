@@ -277,7 +277,7 @@ class CryptoTradingEnv(gym.Env):
             'final_net_worth': self.net_worth,
             'return_pct': (self.net_worth / self.initial_balance - 1) * 100,
             'max_drawdown': np.max(drawdowns) * 100 if len(drawdowns) > 0 else 0,
-            'sharpe_ratio': np.mean(returns) / (np.std(returns) + 1e-9) * np.sqrt(252) if len(returns) > 1 else 0
+            'sharpe_ratio': np.mean(returns) / (np.std(returns) + 1e-9) * np.sqrt(8760) if len(returns) > 1 else 0
         }
             
     def render(self, mode='human'):
