@@ -4,7 +4,7 @@ import time
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-import tensorflow as tf
+import torch
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
@@ -105,8 +105,8 @@ class LiveTrader:
         # Load trained models
         try:
             self.agent.load_models(
-                f"{self.model_path}/{self.symbol}_actor_best.keras",
-                f"{self.model_path}/{self.symbol}_critic_best.keras"
+                f"{self.model_path}/{self.symbol}_actor_best.pt",
+                f"{self.model_path}/{self.symbol}_critic_best.pt"
             )
             print(f"Model loaded for {self.symbol}")
         except Exception as e:

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
-import tensorflow as tf
+import torch
 from tqdm import tqdm
 
 # Add the parent directory to sys.path to allow imports from src
@@ -16,45 +16,16 @@ from src.models.ppo_agent import PPOAgent
 
 # Configure GPU for training
 def configure_gpu():
-    """Configure TensorFlow to use GPU with proper memory growth settings"""
-    try:
-        # First, try to get the GPU
-        gpus = tf.config.experimental.list_physical_devices('GPU')
-        
-        if gpus:
-            print(f"Found {len(gpus)} Physical GPUs")
-            
-            # Try setting memory growth for all GPUs
-            try:
-                for gpu in gpus:
-                    tf.config.experimental.set_memory_growth(gpu, True)
-                print("Memory growth enabled for all GPUs")
-            except Exception as e:
-                print(f"Warning: Could not set memory growth: {e}")
-                print("Trying with memory limit instead...")
-                try:
-                    for gpu in gpus:
-                        tf.config.experimental.set_virtual_device_configuration(
-                            gpu,
-                            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=4096)]
-                        )
-                    print("Memory limit set successfully")
-                except Exception as e:
-                    print(f"Warning: Could not set memory limit: {e}")
-            
-            # Print GPU details
-            for i, gpu in enumerate(gpus):
-                print(f"GPU {i}: {gpu.name}")
-                
-            return True  # GPU is available and configured
-
-    except Exception as e:
-        print(f"GPU configuration error: {e}")
+    """Check for CUDA GPU availability and print device info"""
+    if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        print(f"Found {gpu_count} CUDA GPU(s)")
+        for i in range(gpu_count):
+            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        return True
+    else:
+        print("No GPU detected")
         return False
-    
-    # If we get here, no GPU was found
-    print("No GPU detected")
-    return False
 
 # Create directories for saving models and results
 os.makedirs('models', exist_ok=True)
@@ -116,9 +87,8 @@ def train_agent(
     use_lr_schedule : bool
         Whether to use learning rate scheduling
     """
-    # Clear any existing GPU memory
+    # Check GPU availability
     if use_gpu:
-        tf.keras.backend.clear_session()
         gpu_available = configure_gpu()
         if not gpu_available:
             print("Falling back to CPU training")
@@ -179,15 +149,15 @@ def train_agent(
     if start_episode > 0:
         try:
             # First try to load the latest model for crash recovery
-            actor_path = f'models/{symbol}_actor_latest.keras'
-            critic_path = f'models/{symbol}_critic_latest.keras'
+            actor_path = f'models/{symbol}_actor_latest.pt'
+            critic_path = f'models/{symbol}_critic_latest.pt'
             
             # If latest model doesn't exist, try older checkpoint formats as fallback
             if not os.path.exists(actor_path) or not os.path.exists(critic_path):
                 # Try checkpoint from specific episode
                 latest_checkpoint = start_episode - 1
-                actor_path = f'models/{symbol}_actor_checkpoint_ep{latest_checkpoint}.keras'
-                critic_path = f'models/{symbol}_critic_checkpoint_ep{latest_checkpoint}.keras'
+                actor_path = f'models/{symbol}_actor_checkpoint_ep{latest_checkpoint}.pt'
+                critic_path = f'models/{symbol}_critic_checkpoint_ep{latest_checkpoint}.pt'
                 print(f"Latest models not found. Trying checkpoint format: {actor_path}")
                 
                 # If that fails, try old episode format
@@ -195,8 +165,8 @@ def train_agent(
                 latest_checkpoint = start_episode - (start_episode % save_freq)
                 if latest_checkpoint == 0:
                     latest_checkpoint = save_freq
-                    actor_path = f'models/{symbol}_actor_episode_{latest_checkpoint}.keras'
-                    critic_path = f'models/{symbol}_critic_episode_{latest_checkpoint}.keras'
+                    actor_path = f'models/{symbol}_actor_episode_{latest_checkpoint}.pt'
+                    critic_path = f'models/{symbol}_critic_episode_{latest_checkpoint}.pt'
                     print(f"Checkpoint not found. Trying old episode format: {actor_path}")
             
             if os.path.exists(actor_path) and os.path.exists(critic_path):
@@ -481,8 +451,8 @@ def train_agent(
             if episode_reward > best_reward:
                 best_reward = episode_reward
                 agent.save_models(
-                    f'models/{symbol}_actor_best.keras',
-                    f'models/{symbol}_critic_best.keras'
+                    f'models/{symbol}_actor_best.pt',
+                    f'models/{symbol}_critic_best.pt'
                 )
                 print(f"Episode {episode+1}: New best model saved with reward {episode_reward:.2f}")
             
@@ -507,7 +477,7 @@ def train_agent(
                 
                 # Delete temporary checkpoint files
                 for temp_file in os.listdir('models'):
-                    if (temp_file.startswith(f"{symbol}_checkpoint_ep") or "_step" in temp_file) and temp_file.endswith(".keras"):
+                    if (temp_file.startswith(f"{symbol}_checkpoint_ep") or "_step" in temp_file) and temp_file.endswith(".pt"):
                         try:
                             os.remove(os.path.join('models', temp_file))
                         except Exception as e:
@@ -515,8 +485,8 @@ def train_agent(
             
             # Save the latest model after each episode (for crash recovery)
             agent.save_models(
-                f'models/{symbol}_actor_latest.keras',
-                f'models/{symbol}_critic_latest.keras'
+                f'models/{symbol}_actor_latest.pt',
+                f'models/{symbol}_critic_latest.pt'
             )
             
             # Print estimated time to completion
@@ -539,8 +509,8 @@ def train_agent(
         print("Attempting to save current state before exiting...")
         try:
             agent.save_models(
-                f'models/{symbol}_actor_latest.keras',
-                f'models/{symbol}_critic_latest.keras'
+                f'models/{symbol}_actor_latest.pt',
+                f'models/{symbol}_critic_latest.pt'
             )
             save_training_metrics(train_history, symbol, episode)
             print("Emergency save completed. You can resume from this episode.")
@@ -552,8 +522,8 @@ def train_agent(
     print("Training complete. Saving final models and metrics...")
     # Save latest model one last time
     agent.save_models(
-        f'models/{symbol}_actor_latest.keras',
-        f'models/{symbol}_critic_latest.keras'
+        f'models/{symbol}_actor_latest.pt',
+        f'models/{symbol}_critic_latest.pt'
     )
     
     # Save final training metrics
@@ -582,8 +552,8 @@ def train_agent(
     
     # Load the best model from training
     test_agent.load_models(
-        f'models/{symbol}_actor_best.keras',
-        f'models/{symbol}_critic_best.keras'
+        f'models/{symbol}_actor_best.pt',
+        f'models/{symbol}_critic_best.pt'
     )
     
     # Initialize risk metrics for testing

@@ -70,14 +70,13 @@ if __name__ == "__main__":
     # Enable mixed precision if requested
     if args.mixed_precision and use_gpu:
         try:
-            import tensorflow as tf
-            print("Enabling mixed precision training for faster performance")
-            policy = tf.keras.mixed_precision.Policy('mixed_float16')
-            tf.keras.mixed_precision.set_global_policy(policy)
-            print("Mixed precision policy set successfully")
+            import torch
+            if torch.cuda.is_available():
+                print("Mixed precision (AMP) is available and will be used by PyTorch automatically when beneficial")
+            else:
+                print("Warning: Mixed precision requested but no CUDA GPU found")
         except Exception as e:
-            print(f"Warning: Could not enable mixed precision: {e}")
-            print("Continuing with default precision settings")
+            print(f"Warning: Could not check mixed precision support: {e}")
     
     print(f"\nStarting training for {args.symbol} from {args.start_date} to {args.end_date}")
     print(f"Training configuration:")

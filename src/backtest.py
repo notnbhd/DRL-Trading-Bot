@@ -4,7 +4,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
-import tensorflow as tf
 from sklearn.metrics import accuracy_score
 import seaborn as sns
 from tqdm import tqdm
@@ -115,8 +114,8 @@ class Backtester:
         
         # Attempt to load model
         try:
-            actor_path = f"{self.model_path}/{self.symbol}_actor_best.keras"
-            critic_path = f"{self.model_path}/{self.symbol}_critic_best.keras"
+            actor_path = f"{self.model_path}/{self.symbol}_actor_best.pt"
+            critic_path = f"{self.model_path}/{self.symbol}_critic_best.pt"
             
             self.agent.load_models(actor_path, critic_path)
             print(f"Loaded model from {actor_path} and {critic_path}")

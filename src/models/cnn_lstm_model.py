@@ -1,21 +1,135 @@
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, Conv1D, MaxPooling1D, LSTM, Flatten, Concatenate, Dropout
-from tensorflow.keras.optimizers import Adam
+import torch
+import torch.nn as nn
+
+
+class ActorNetwork(nn.Module):
+    """Actor network using CNN-LSTM architecture"""
+
+    def __init__(self, input_shape, action_space):
+        """
+        Parameters
+        ----------
+        input_shape : tuple
+            (lookback_window, features)
+        action_space : int
+            Number of possible actions
+        """
+        super().__init__()
+        seq_len, n_features = input_shape
+
+        # Feature Learning — Conv1D expects (batch, channels, seq_len)
+        self.conv1 = nn.Conv1d(
+            in_channels=n_features,
+            out_channels=32,
+            kernel_size=3,
+            padding=1,  # 'same' padding
+        )
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool1d(kernel_size=2)
+
+        # Sequence Learning
+        self.lstm = nn.LSTM(
+            input_size=32,
+            hidden_size=32,
+            batch_first=True,
+        )
+
+        # Decision
+        self.fc1 = nn.Linear(32, 32)
+        self.fc_out = nn.Linear(32, action_space)
+
+    def forward(self, x):
+        """
+        Parameters
+        ----------
+        x : torch.Tensor
+            Shape (batch, seq_len, features)
+
+        Returns
+        -------
+        torch.Tensor
+            Action probabilities, shape (batch, action_space)
+        """
+        # Conv1D needs (batch, channels, seq_len)
+        x = x.transpose(1, 2)
+        x = self.relu(self.conv1(x))
+        x = self.pool(x)
+
+        # LSTM needs (batch, seq_len, features)
+        x = x.transpose(1, 2)
+        _, (h_n, _) = self.lstm(x)
+        x = h_n.squeeze(0)  # (batch, 32)
+
+        x = self.relu(self.fc1(x))
+        x = torch.softmax(self.fc_out(x), dim=-1)
+        return x
+
+
+class CriticNetwork(nn.Module):
+    """Critic network using CNN-LSTM architecture"""
+
+    def __init__(self, input_shape):
+        """
+        Parameters
+        ----------
+        input_shape : tuple
+            (lookback_window, features)
+        """
+        super().__init__()
+        seq_len, n_features = input_shape
+
+        self.conv1 = nn.Conv1d(
+            in_channels=n_features,
+            out_channels=32,
+            kernel_size=3,
+            padding=1,
+        )
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool1d(kernel_size=2)
+
+        self.lstm = nn.LSTM(
+            input_size=32,
+            hidden_size=32,
+            batch_first=True,
+        )
+
+        self.fc1 = nn.Linear(32, 32)
+        self.fc_out = nn.Linear(32, 1)
+
+    def forward(self, x):
+        """
+        Parameters
+        ----------
+        x : torch.Tensor
+            Shape (batch, seq_len, features)
+
+        Returns
+        -------
+        torch.Tensor
+            State value, shape (batch, 1)
+        """
+        x = x.transpose(1, 2)
+        x = self.relu(self.conv1(x))
+        x = self.pool(x)
+
+        x = x.transpose(1, 2)
+        _, (h_n, _) = self.lstm(x)
+        x = h_n.squeeze(0)
+
+        x = self.relu(self.fc1(x))
+        x = self.fc_out(x)
+        return x
+
 
 class CNNLSTM:
     """CNN-LSTM model for feature extraction and time series forecasting based on the paper architecture"""
-    def __init__(
-        self, 
-        input_shape, 
-        action_space, 
-        learning_rate=0.00025
-    ):
+
+    def __init__(self, input_shape, action_space, learning_rate=0.00025):
         """
         Initialize the CNN-LSTM model
-        
-        Parameters:
-        -----------
+
+        Parameters
+        ----------
         input_shape : tuple
             Shape of the input data (lookback_window, features)
         action_space : int
@@ -26,106 +140,15 @@ class CNNLSTM:
         self.input_shape = input_shape
         self.action_space = action_space
         self.learning_rate = learning_rate
-        
-        # Build actor and critic models
-        self.actor = self._build_actor_model()
-        self.critic = self._build_critic_model()
-        
-    def _build_actor_model(self):
-        """Build the actor model using CNN-LSTM architecture"""
-        # Input layer (output shape = 100, 4)
-        inputs = Input(shape=self.input_shape)
-        
-        # Feature Learning section
-        # Conv1D layer (output shape = 100, 32)
-        x = Conv1D(
-            filters=32,
-            kernel_size=3,
-            padding='same',
-            activation='relu',
-            name='actor_conv_1'
-        )(inputs)
-        
-        # MaxPooling1D layer (output shape = 50, 32)
-        x = MaxPooling1D(pool_size=2, name='actor_pool_1')(x)
-        
-        # Sequence Learning section
-        # LSTM layers (output shape = None, 32)
-        x = LSTM(
-            units=32,
-            return_sequences=False,
-            name='actor_lstm_1'
-        )(x)
 
-       
-        # Dense layer (output shape = None, 32)
-        x = Dense(
-            units=32,
-            activation='relu',
-            name='actor_dense_1'
-        )(x)
-        
-        # Output Dense layer (output shape = None, 3)
-        outputs = Dense(
-            units=self.action_space,
-            activation='softmax',
-            name='actor_output'
-        )(x)
-        
-        # Create model
-        model = Model(inputs=inputs, outputs=outputs, name='actor')
-        
-        return model
-    
-    def _build_critic_model(self):
-        """Build the critic model"""
-        # Input layer (output shape = 100, 4)
-        inputs = Input(shape=self.input_shape)
-        
-        # Feature Learning section
-        # Conv1D layer (output shape = 100, 32)
-        x = Conv1D(
-            filters=32,
-            kernel_size=3,
-            padding='same',
-            activation='relu',
-            name='critic_conv_1'
-        )(inputs)
-        
-        # MaxPooling1D layer (output shape = 50, 32)
-        x = MaxPooling1D(pool_size=2, name='critic_pool_1')(x)
-        
-        # Sequence Learning section
-        # LSTM layer (output shape = None, 32)
-        x = LSTM(
-            units=32,
-            return_sequences=False,
-            name='critic_lstm_1'
-        )(x)
-        
-        # Dense layer (output shape = None, 32)
-        x = Dense(
-            units=32,
-            activation='relu',
-            name='critic_dense_1'
-        )(x)
-        
-        # Output Dense layer (output shape = None, 1)
-        outputs = Dense(
-            units=1,
-            activation=None,
-            name='critic_output'
-        )(x)
-        
-        # Create model
-        model = Model(inputs=inputs, outputs=outputs, name='critic')
-        
-        return model
-    
+        # Build actor and critic models
+        self.actor = ActorNetwork(input_shape, action_space)
+        self.critic = CriticNetwork(input_shape)
+
     def get_actor(self):
         """Return the actor model"""
         return self.actor
-    
+
     def get_critic(self):
         """Return the critic model"""
-        return self.critic 
+        return self.critic

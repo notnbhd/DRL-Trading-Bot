@@ -34,8 +34,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Ensure model files exist
-    actor_path = f"{args.model_path}/{args.symbol}_actor_best.keras"
-    critic_path = f"{args.model_path}/{args.symbol}_critic_best.keras"
+    actor_path = f"{args.model_path}/{args.symbol}_actor_best.pt"
+    critic_path = f"{args.model_path}/{args.symbol}_critic_best.pt"
     
     if not os.path.exists(actor_path) or not os.path.exists(critic_path):
         print(f"ERROR: Model files not found at {actor_path} and {critic_path}")

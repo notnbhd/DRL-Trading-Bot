@@ -9,7 +9,7 @@ from datetime import datetime
 def get_latest_episode():
     """Find the latest episode number from model files or checkpoint files"""
     # Look for latest model
-    if os.path.exists('models/BTCUSDT_actor_latest.keras'):
+    if os.path.exists('models/BTCUSDT_actor_latest.pt'):
         # Try to find episode number from metrics files
         metrics_files = glob.glob('results/BTCUSDT_training_metrics_ep*.csv')
         if metrics_files:
@@ -64,7 +64,6 @@ def main():
             "--episodes", str(episodes),
             "--save-freq", str(save_freq),
             "--resume-from", str(current_episode),
-            "--mixed-precision"
         ]
         
         try:

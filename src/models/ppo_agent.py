@@ -1,8 +1,6 @@
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.optimizers.schedules import ExponentialDecay, PiecewiseConstantDecay
-import tensorflow.keras.backend as K
+import torch
+import torch.nn.functional as F
 from src.models.cnn_lstm_model import CNNLSTM
 
 class PPOAgent:
@@ -26,7 +24,7 @@ class PPOAgent:
         """
         Initialize the PPO agent
         
-        Parameters:
+        Parameters
         -----------
         input_shape : tuple
             Shape of the input data (lookback_window, features)
@@ -70,39 +68,65 @@ class PPOAgent:
         self.kl_cutoff_factor = kl_cutoff_factor
         self.adaptive_epsilon = adaptive_epsilon
         
+        # Device selection
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
         # Create CNN-LSTM model
         self.model = CNNLSTM(input_shape, action_space, learning_rate)
         
         # Actor and critic models
-        self.actor = self.model.get_actor()
-        self.critic = self.model.get_critic()
+        self.actor = self.model.get_actor().to(self.device)
+        self.critic = self.model.get_critic().to(self.device)
         
-        # Create optimizers with learning rate scheduling
+        # Create optimizers
         if use_lr_schedule:
-            # Exponential decay learning rate schedule for actor
-            actor_lr_schedule = ExponentialDecay(
-                initial_learning_rate=learning_rate,
-                decay_steps=10000,  # Decay every 10k steps
-                decay_rate=0.95,    # Reduce by 5% each decay step
-                staircase=True      # Apply decay in discrete steps
+            self.actor_optimizer = torch.optim.Adam(
+                self.actor.parameters(), lr=learning_rate
+            )
+            self.critic_optimizer = torch.optim.Adam(
+                self.critic.parameters(), lr=learning_rate * 3.0
             )
             
-            # Piecewise constant decay for critic - starts higher, declines more aggressively 
-            critic_lr_schedule = PiecewiseConstantDecay(
-                boundaries=[5000, 15000, 30000],  # Step boundaries
-                values=[learning_rate * 3.0, learning_rate * 2.0, learning_rate * 1.0, learning_rate * 0.5]  # Learning rates for each period
+            # Exponential decay for actor: reduce by 5% every 10k steps
+            self.actor_scheduler = torch.optim.lr_scheduler.StepLR(
+                self.actor_optimizer,
+                step_size=10000,
+                gamma=0.95,
             )
             
-            self.actor_optimizer = Adam(learning_rate=actor_lr_schedule)
-            self.critic_optimizer = Adam(learning_rate=critic_lr_schedule)
+            # Piecewise constant decay for critic
+            # boundaries=[5000, 15000, 30000] with rates [3x, 2x, 1x, 0.5x]
+            base_lr = learning_rate
+            milestones_and_lrs = {
+                0: base_lr * 3.0,
+                5000: base_lr * 2.0,
+                15000: base_lr * 1.0,
+                30000: base_lr * 0.5,
+            }
+            boundaries = sorted(milestones_and_lrs.keys())
             
-            # Store schedules for debugging
-            self.actor_lr_schedule = actor_lr_schedule
-            self.critic_lr_schedule = critic_lr_schedule
+            def critic_lr_lambda(step):
+                lr = milestones_and_lrs[boundaries[0]]
+                for b in boundaries:
+                    if step >= b:
+                        lr = milestones_and_lrs[b]
+                # Return factor relative to initial lr (which is base_lr * 3.0)
+                return lr / (base_lr * 3.0)
+            
+            self.critic_scheduler = torch.optim.lr_scheduler.LambdaLR(
+                self.critic_optimizer,
+                lr_lambda=critic_lr_lambda,
+            )
         else:
             # Fixed learning rates
-            self.actor_optimizer = Adam(learning_rate=0.0003)
-            self.critic_optimizer = Adam(learning_rate=0.0005)
+            self.actor_optimizer = torch.optim.Adam(
+                self.actor.parameters(), lr=0.0003
+            )
+            self.critic_optimizer = torch.optim.Adam(
+                self.critic.parameters(), lr=0.0005
+            )
+            self.actor_scheduler = None
+            self.critic_scheduler = None
         
         # Initialize memory for trajectory collection
         self.clear_memory()
@@ -111,25 +135,30 @@ class PPOAgent:
         """
         Get action from the actor model
 
-        Parameters:
+        Parameters
         -----------
         state : numpy.ndarray
             Current state observation
         training : bool, optional
-            Whether in training mode (random sampling) or not (softmax sampling with temperature)
+            Whether in training mode (random sampling) or not (greedy)
         tau : float, optional
-            Temperature for softmax sampling in testing mode (lower = more deterministic)
+            Temperature for softmax sampling in testing mode (unused, kept for API compat)
 
-        Returns:
+        Returns
         --------
         action, action_prob
         """
         # Reshape state if needed
         if len(state.shape) == 2:
             state = np.expand_dims(state, axis=0)
-
-        # Get action probabilities from the policy network (π_θ(at|st))
-        action_probs = self.actor.predict(state, verbose=0)[0]
+        
+        # Convert to tensor and run inference
+        state_tensor = torch.from_numpy(state.astype(np.float32)).to(self.device)
+        
+        self.actor.eval()
+        with torch.no_grad():
+            action_probs = self.actor(state_tensor)[0].cpu().numpy()
+        self.actor.train()
 
         if training:
             # Sample action from probability distribution
@@ -155,42 +184,35 @@ class PPOAgent:
         """
         Calculate KL divergence between old and new policy distributions
         
-        Parameters:
+        Parameters
         -----------
-        old_probs : tensorflow.Tensor
+        old_probs : torch.Tensor
             Probabilities from old policy
-        new_probs : tensorflow.Tensor
+        new_probs : torch.Tensor
             Probabilities from new policy
             
-        Returns:
+        Returns
         --------
         Mean KL divergence
         """
-        # Ensure both tensors have the same dtype (float32)
-        old_probs = tf.cast(old_probs, tf.float32)
-        new_probs = tf.cast(new_probs, tf.float32)
+        # Avoid log(0) by clamping
+        old_probs = old_probs.clamp(min=1e-10, max=1.0)
+        new_probs = new_probs.clamp(min=1e-10, max=1.0)
         
-        # Avoid log(0) by adding a small epsilon
-        old_probs = tf.clip_by_value(old_probs, 1e-10, 1.0)
-        new_probs = tf.clip_by_value(new_probs, 1e-10, 1.0)
-        
-        # Calculate KL divergence: KL(p||q) = sum(p * log(p/q))
-        kl_div = tf.reduce_sum(
-            old_probs * tf.math.log(old_probs / new_probs),
-            axis=1
-        )
-        return tf.reduce_mean(kl_div)
+        # KL(p||q) = sum(p * log(p/q))
+        kl_div = (old_probs * torch.log(old_probs / new_probs)).sum(dim=1)
+        return kl_div.mean()
     
     def _adjust_epsilon(self, kl_div):
         """
         Adjust epsilon based on KL divergence to prevent policy collapse
         
-        Parameters:
+        Parameters
         -----------
         kl_div : float
             KL divergence between old and new policies
             
-        Returns:
+        Returns
         --------
         Updated epsilon value
         """
@@ -211,7 +233,7 @@ class PPOAgent:
         
         This computes Ât in the PPO formula: L^CLIP(θ) = Ê_t[min(r_t(θ)Â_t, clip(r_t(θ), 1-ε, 1+ε)Â_t)]
         
-        Parameters:
+        Parameters
         -----------
         rewards : list
             List of rewards
@@ -222,7 +244,7 @@ class PPOAgent:
         dones : list
             List of done flags
             
-        Returns:
+        Returns
         --------
         advantages, returns
         """
@@ -248,7 +270,6 @@ class PPOAgent:
         # Compute returns (value targets)
         returns = advantages + values
 
-
         # Normalize advantages for training stability
         advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
         
@@ -256,13 +277,8 @@ class PPOAgent:
     
     def get_learning_rates(self):
         """Get current learning rates for actor and critic optimizers"""
-        if self.use_lr_schedule:
-            actor_lr = self.actor_lr_schedule(self.training_steps)
-            critic_lr = self.critic_lr_schedule(self.training_steps)
-        else:
-            actor_lr = self.actor_optimizer.learning_rate
-            critic_lr = self.critic_optimizer.learning_rate
-            
+        actor_lr = self.actor_optimizer.param_groups[0]['lr']
+        critic_lr = self.critic_optimizer.param_groups[0]['lr']
         return {"actor_lr": float(actor_lr), "critic_lr": float(critic_lr)}
     
     def train(self, batch_size=32, epochs=5):
@@ -270,14 +286,14 @@ class PPOAgent:
         Train the PPO agent following the flowchart in Figure 4 and
         pseudocode in Figure 5
         
-        Parameters:
+        Parameters
         -----------
         batch_size : int, optional
             Size of mini-batches for training
         epochs : int, optional
             Number of epochs to train on the same data
             
-        Returns:
+        Returns
         --------
         Dictionary with training metrics
         """
@@ -290,20 +306,31 @@ class PPOAgent:
         actions = np.array(self.actions)
         rewards = np.array(self.rewards, dtype=np.float32)
         next_states = np.array(self.next_states, dtype=np.float32)
-        dones = np.array(self.dones)
+        dones = np.array(self.dones, dtype=np.float32)
         old_action_probs = np.array(self.action_probs, dtype=np.float32)
         
         # Get values for current states and next states using critic
-        # Move prediction to CPU to avoid GPU memory issues
-        with tf.device('/GPU:0'):
-            values = self.critic.predict(states, verbose=0).flatten()
-            next_values = self.critic.predict(next_states, verbose=0).flatten()
+        states_t = torch.from_numpy(states).to(self.device)
+        next_states_t = torch.from_numpy(next_states).to(self.device)
+        
+        self.critic.eval()
+        with torch.no_grad():
+            values = self.critic(states_t).squeeze(-1).cpu().numpy()
+            next_values = self.critic(next_states_t).squeeze(-1).cpu().numpy()
+        self.critic.train()
         
         # Compute advantages and returns using GAE
         advantages, returns = self._compute_advantage(rewards, values, next_values, dones)
         
         # Create one-hot encoded actions
-        actions_one_hot = tf.one_hot(actions, self.action_space)
+        actions_one_hot = F.one_hot(
+            torch.from_numpy(actions).long(), self.action_space
+        ).float().to(self.device)
+        
+        # Pre-convert to tensors
+        advantages_t = torch.from_numpy(advantages).to(self.device)
+        returns_t = torch.from_numpy(returns).to(self.device)
+        old_probs_t = torch.from_numpy(old_action_probs).to(self.device)
         
         # Track training metrics
         history = {'actor_loss': [], 'critic_loss': [], 'total_loss': [], 'kl_div': []}
@@ -321,88 +348,79 @@ class PPOAgent:
             for start_idx in range(0, len(indices), batch_size):
                 end_idx = min(start_idx + batch_size, len(indices))
                 batch_indices = indices[start_idx:end_idx]
+                batch_idx_t = torch.from_numpy(batch_indices).long().to(self.device)
                 
-                # Get batch data and convert to tensors
-                with tf.device('/GPU:0'):
-                    batch_states = tf.convert_to_tensor(states[batch_indices], dtype=tf.float32)
-                    batch_actions_one_hot = tf.gather(actions_one_hot, batch_indices)
-                    batch_advantages = tf.convert_to_tensor(advantages[batch_indices], dtype=tf.float32)
-                    batch_returns = tf.convert_to_tensor(returns[batch_indices], dtype=tf.float32)
-                    batch_old_probs = tf.convert_to_tensor(old_action_probs[batch_indices], dtype=tf.float32)
+                # Get batch data
+                batch_states = states_t[batch_idx_t]
+                batch_actions_one_hot = actions_one_hot[batch_idx_t]
+                batch_advantages = advantages_t[batch_idx_t]
+                batch_returns = returns_t[batch_idx_t]
+                batch_old_probs = old_probs_t[batch_idx_t]
                 
-                # Train actor
-                with tf.GradientTape() as tape:
-                    # Get current policy probabilities
-                    current_probs = self.actor(batch_states, training=True)
-                    
-                    # Calculate KL divergence between old and new policies
-                    kl_div = self._calculate_kl_divergence(batch_old_probs, current_probs)
-                    epoch_kl_divs.append(float(kl_div))
-                    
-                    # Make sure both tensors have the same dtype before multiplication
-                    current_probs_float32 = tf.cast(current_probs, tf.float32)
-                    batch_actions_one_hot_float32 = tf.cast(batch_actions_one_hot, tf.float32)
-                    
-                    # Extract probabilities of the actions that were actually taken
-                    current_action_probs = tf.reduce_sum(current_probs_float32 * batch_actions_one_hot_float32, axis=1)
-                    old_action_prob_values = tf.reduce_sum(batch_old_probs * batch_actions_one_hot_float32, axis=1)
-                    
-                    # Calculate probability ratio
-                    ratio = current_action_probs / (old_action_prob_values + 1e-8)
-                    
-                    # Adaptive epsilon if KL divergence is too high or too low
-                    if self.adaptive_epsilon and len(epoch_kl_divs) > 0:
-                        self.epsilon = self._adjust_epsilon(kl_div)
-                    
-                    # Calculate surrogate losses with potentially adjusted epsilon
-                    surrogate1 = ratio * batch_advantages
-                    surrogate2 = tf.clip_by_value(
-                        ratio, 1 - self.epsilon, 1 + self.epsilon
-                    ) * batch_advantages
-                    
-                    # PPO-CLIP objective
-                    actor_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
-                    
-                    # Add entropy term for exploration
-                    entropy = -tf.reduce_mean(
-                        tf.reduce_sum(current_probs_float32 * tf.math.log(current_probs_float32 + 1e-8), axis=1)
-                    )
-                    actor_loss -= self.entropy_coef * entropy
+                # ---- Train actor ----
+                self.actor_optimizer.zero_grad()
                 
-                # Get actor gradients and apply
-                actor_gradients = tape.gradient(actor_loss, self.actor.trainable_variables)
-                self.actor_optimizer.apply_gradients(zip(actor_gradients, self.actor.trainable_variables))
+                # Get current policy probabilities
+                current_probs = self.actor(batch_states)
                 
-                # Train critic
-                with tf.GradientTape() as tape:
-                    # Predict values
-                    value_pred = self.critic(batch_states, training=True)
-                    value_pred = tf.reshape(value_pred, [-1])
-                    
-                    # Cast value predictions to float32 to match batch_returns
-                    value_pred = tf.cast(value_pred, tf.float32)
-                    
-                    # Calculate critic loss
-                    critic_loss = self.value_coef * tf.reduce_mean(
-                        tf.square(batch_returns - value_pred)
-                    )
+                # Calculate KL divergence between old and new policies
+                kl_div = self._calculate_kl_divergence(batch_old_probs, current_probs)
+                epoch_kl_divs.append(float(kl_div.item()))
                 
-                # Get critic gradients and apply
-                critic_gradients = tape.gradient(critic_loss, self.critic.trainable_variables)
-                self.critic_optimizer.apply_gradients(zip(critic_gradients, self.critic.trainable_variables))
+                # Extract probabilities of the actions that were actually taken
+                current_action_probs = (current_probs * batch_actions_one_hot).sum(dim=1)
+                old_action_prob_values = (batch_old_probs * batch_actions_one_hot).sum(dim=1)
+                
+                # Calculate probability ratio
+                ratio = current_action_probs / (old_action_prob_values + 1e-8)
+                
+                # Adaptive epsilon if KL divergence is too high or too low
+                if self.adaptive_epsilon and len(epoch_kl_divs) > 0:
+                    self.epsilon = self._adjust_epsilon(kl_div.item())
+                
+                # Calculate surrogate losses with potentially adjusted epsilon
+                surrogate1 = ratio * batch_advantages
+                surrogate2 = torch.clamp(
+                    ratio, 1 - self.epsilon, 1 + self.epsilon
+                ) * batch_advantages
+                
+                # PPO-CLIP objective
+                actor_loss = -torch.min(surrogate1, surrogate2).mean()
+                
+                # Add entropy term for exploration
+                entropy = -(current_probs * torch.log(current_probs + 1e-8)).sum(dim=1).mean()
+                actor_loss = actor_loss - self.entropy_coef * entropy
+                
+                actor_loss.backward()
+                self.actor_optimizer.step()
+                
+                # ---- Train critic ----
+                self.critic_optimizer.zero_grad()
+                
+                value_pred = self.critic(batch_states).squeeze(-1)
+                critic_loss = self.value_coef * F.mse_loss(value_pred, batch_returns)
+                
+                critic_loss.backward()
+                self.critic_optimizer.step()
+                
+                # Step learning rate schedulers
+                if self.actor_scheduler is not None:
+                    self.actor_scheduler.step()
+                if self.critic_scheduler is not None:
+                    self.critic_scheduler.step()
                 
                 # Record losses
-                history['actor_loss'].append(float(actor_loss))
-                history['critic_loss'].append(float(critic_loss))
-                history['total_loss'].append(float(actor_loss + critic_loss))
-                history['kl_div'].append(float(kl_div))
+                history['actor_loss'].append(float(actor_loss.item()))
+                history['critic_loss'].append(float(critic_loss.item()))
+                history['total_loss'].append(float(actor_loss.item() + critic_loss.item()))
+                history['kl_div'].append(float(kl_div.item()))
                 
                 # Update training step counter for learning rate scheduling
                 self.training_steps += 1
                 
                 # Early stopping if KL divergence is too high
-                if self.adaptive_epsilon and float(kl_div) > self.kl_cutoff_factor * 2 * self.kl_target:
-                    print(f"Early stopping at epoch {epoch} due to high KL divergence: {float(kl_div):.6f}")
+                if self.adaptive_epsilon and float(kl_div.item()) > self.kl_cutoff_factor * 2 * self.kl_target:
+                    print(f"Early stopping at epoch {epoch} due to high KL divergence: {float(kl_div.item()):.6f}")
                     break
             
             # Track average KL divergence for this epoch
@@ -436,11 +454,16 @@ class PPOAgent:
     
     def save_models(self, actor_path, critic_path):
         """Save actor and critic models to disk"""
-        self.actor.save(actor_path)
-        self.critic.save(critic_path)
+        torch.save(self.actor.state_dict(), actor_path)
+        torch.save(self.critic.state_dict(), critic_path)
     
     def load_models(self, actor_path, critic_path):
         """Load actor and critic models from disk"""
-        self.actor = tf.keras.models.load_model(actor_path)
-        self.critic = tf.keras.models.load_model(critic_path)
-    
+        self.actor.load_state_dict(
+            torch.load(actor_path, map_location=self.device, weights_only=True)
+        )
+        self.critic.load_state_dict(
+            torch.load(critic_path, map_location=self.device, weights_only=True)
+        )
+        self.actor.to(self.device)
+        self.critic.to(self.device)
