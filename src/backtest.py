@@ -93,8 +93,13 @@ class Backtester:
             end_str=self.end_date
         )
         
-        # Preprocess data
-        df = self.data_processor.prepare_data(df)
+        # Preprocess data (indicators + differencing, but NO normalization yet)
+        df = self.data_processor.prepare_data(df, normalize=False)
+        
+        # Load the scaler fitted during training and transform
+        scaler_path = f"{self.model_path}/{self.symbol}_scaler.joblib"
+        self.data_processor.load_scaler(scaler_path)
+        df = self.data_processor.transform_normalize(df)
         
         print(f"Loaded {len(df)} data points.")
         return df

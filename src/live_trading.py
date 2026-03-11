@@ -76,7 +76,7 @@ class LiveTrader:
         self.trade_history = []
     
     def _load_model(self):
-        """Load the trained model"""
+        """Load the trained model and scaler"""
         # Get sample data to determine input shape
         end_time = datetime.now()
         start_time = end_time - timedelta(days=self.lookback_window_size)
@@ -88,8 +88,12 @@ class LiveTrader:
             end_time.strftime('%Y-%m-%d')
         )
         
-        # Process sample data to determine expected input shape
-        processed_df = self.data_processor.prepare_data(sample_df)
+        # Load the scaler fitted during training
+        scaler_path = f"{self.model_path}/{self.symbol}_scaler.joblib"
+        self.data_processor.load_scaler(scaler_path)
+        
+        # Process sample data to determine expected input shape (use training scaler)
+        processed_df = self.data_processor.prepare_data(sample_df, fit_scaler=False)
         
         # Determine input shape from sample data
         input_shape = (self.lookback_window_size, processed_df.shape[1])  # +2 for balance and crypto held
@@ -351,8 +355,8 @@ class LiveTrader:
                     end_time.strftime('%Y-%m-%d')
                 )
                 
-                # Process data
-                processed_df = self.data_processor.prepare_data(df)
+                # Process data (use training scaler, don't re-fit)
+                processed_df = self.data_processor.prepare_data(df, fit_scaler=False)
                 
                 # Prepare state
                 state = self._prepare_state(processed_df[['close_diff', 'rsi', 'atr', 'cmf']])

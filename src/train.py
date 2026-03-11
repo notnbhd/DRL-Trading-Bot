@@ -137,18 +137,23 @@ def train_agent(
     data_processor = DataProcessor()
     df = data_processor.download_data(symbol, interval, start_date, end_date)
     
-    # Step 2: Add indicators (as shown in Figure 4)
-    print("Step 2: Adding technical indicators...")
-    df = data_processor.prepare_data(df)
+    # Step 2: Add indicators and differencing (no normalization yet)
+    print("Step 2: Adding technical indicators and differencing...")
+    df = data_processor.prepare_data(df, normalize=False)
     
-    # Step 3: Data standardization (as shown in Figure 4)
-    print("Step 3: Standardizing data...")
-    # Already handled in data_processor.prepare_data()
-    
-    # Split into training and testing sets
+    # Split into training and testing sets BEFORE normalization to avoid data leakage
     train_size = int(len(df) * (1 - test_split))
     train_df = df.iloc[:train_size]
     test_df = df.iloc[train_size:]
+    
+    # Step 3: Data standardization — fit scaler on training data only
+    print("Step 3: Standardizing data (fit on train, transform test)...")
+    train_df = data_processor.fit_normalize(train_df)
+    test_df = data_processor.transform_normalize(test_df)
+    
+    # Save the fitted scaler for use in backtest and live trading
+    scaler_path = f'models/{symbol}_scaler.joblib'
+    data_processor.save_scaler(scaler_path)
     
     print(f"Training data: {len(train_df)} samples")
     print(f"Testing data: {len(test_df)} samples")

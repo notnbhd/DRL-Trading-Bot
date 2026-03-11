@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+import joblib
 from ta.volatility import AverageTrueRange
 from ta.momentum import RSIIndicator
 from ta.volume import OnBalanceVolumeIndicator
@@ -189,50 +190,47 @@ class CachedDataProcessor:
         
         return df_diff
     
-    def normalize_data(self, df):
+    def fit_normalize(self, df):
         """
-        Normalize data using Min-Max scaling to the range [-1, 1] as mentioned in the paper
-        
-        Parameters:
-        -----------
-        df : pandas.DataFrame
-            DataFrame with features
-            
-        Returns:
-        --------
-        DataFrame with normalized features
+        Fit the scaler on data and transform it. Use ONLY on training data.
         """
         df_normalized = df.copy()
-        
-        # Store original close price and non-differenced columns separately
-        # These will be excluded from normalization to preserve their original values
         preserve_columns = ['close_orig']
         normalized_columns = [col for col in df_normalized.columns if col not in preserve_columns]
-        
-        # Store column names
-        columns = normalized_columns
-        
-        # Fit and transform only the columns to be normalized
         normalized_data = self.scaler.fit_transform(df_normalized[normalized_columns])
-        
-        # Convert back to DataFrame with proper indexing
-        normalized_df = pd.DataFrame(normalized_data, columns=columns, index=df_normalized.index)
-        
-        # Add back preserved columns
+        normalized_df = pd.DataFrame(normalized_data, columns=normalized_columns, index=df_normalized.index)
         for col in preserve_columns:
             if col in df_normalized.columns:
                 normalized_df[col] = df_normalized[col]
-        
         return normalized_df
     
-    def prepare_data(self, df, add_indicators=True, apply_diff=True, normalize=True):
+    def transform_normalize(self, df):
         """
-        Prepare data for training by applying all preprocessing steps as described in the paper.
-        Creates input states with 100 hours of market information containing:
-        - Closing price
-        - Relative strength index indicator
-        - Normalized average true range indicator
-        - On-balance volume indicator
+        Transform data using an already-fitted scaler. Use for test/backtest/live data.
+        """
+        df_normalized = df.copy()
+        preserve_columns = ['close_orig']
+        normalized_columns = [col for col in df_normalized.columns if col not in preserve_columns]
+        normalized_data = self.scaler.transform(df_normalized[normalized_columns])
+        normalized_df = pd.DataFrame(normalized_data, columns=normalized_columns, index=df_normalized.index)
+        for col in preserve_columns:
+            if col in df_normalized.columns:
+                normalized_df[col] = df_normalized[col]
+        return normalized_df
+    
+    def save_scaler(self, path):
+        """Save the fitted scaler to disk"""
+        joblib.dump(self.scaler, path)
+        print(f"Scaler saved to {path}")
+    
+    def load_scaler(self, path):
+        """Load a previously fitted scaler from disk"""
+        self.scaler = joblib.load(path)
+        print(f"Scaler loaded from {path}")
+    
+    def prepare_data(self, df, add_indicators=True, apply_diff=True, normalize=True, fit_scaler=True):
+        """
+        Prepare data for training by applying all preprocessing steps.
         
         Parameters:
         -----------
@@ -244,24 +242,23 @@ class CachedDataProcessor:
             Whether to apply differencing to make data stationary
         normalize : bool, optional
             Whether to normalize data for faster training
-            
-        Returns:
-        --------
-        Preprocessed DataFrame ready for training
+        fit_scaler : bool, optional
+            If True, fit the scaler on this data (training data only).
+            If False, use an already-fitted scaler to transform.
         """
         processed_df = df.copy()
         
-        # Add technical indicators
         if add_indicators:
             processed_df = self.add_technical_indicators(processed_df)
         
-        # Apply differencing to make data stationary
         if apply_diff:
             processed_df = self.apply_difference(processed_df)
         
-        # Normalize data to range [-1, 1]
         if normalize:
-            processed_df = self.normalize_data(processed_df)
+            if fit_scaler:
+                processed_df = self.fit_normalize(processed_df)
+            else:
+                processed_df = self.transform_normalize(processed_df)
         
         print(f"Prepared data with features: {processed_df.columns.tolist()}")
         print(f"Data includes lookback window of {100} hours with closing price and technical indicators")
